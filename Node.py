@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from tkinter import E
 from charm.toolbox.ecgroup import ZR
 
 class Node:
@@ -15,7 +14,8 @@ class Node:
     r = None
     Rprev = None
     R = None
-    rfactor = None
+    rfactorL = None
+    rfactorR = None
     eL = None
     eR = None
     sp = None
@@ -39,14 +39,7 @@ class Node:
         # self._sock.close()
 
     def vf(self, w):
-        # return self.g ** self.spL == self.rfactor * (self.pkL ** self.e)
-        if self.leftNode is not None:
-            print(f"rfactor {self.rfactor}")
-            print(">>>>>>>>>>>>>>>>>>>>>>>>>")
-            print(self.g ** w)
-            print(self.rfactor * (self.pkL ** self.eL))
-            print("+++++++++++++++++++++++++++")
-        pass
+        return self.g ** w == self.rfactorR * (self.pkR ** self.eR)
     
     def log(self, msg):
         print(f"{self.name}: {msg}")
@@ -115,14 +108,9 @@ class Node:
             "Rprev": self.R
         }, _LOCK_SENDER_3, _LOCK_RECIPIENT_2)
 
-    def release(self):
+    def release(self, k):
         sp = (self.sp if self.sp is not None else 0)
-        print(f"w1 {self.spL}")
-        print(f"kn {self.kn}")
-        print(f"sp {sp}")
-        print(f"y {self.y}")
-        w = self.spL + self.kn - (sp + self.y)
-        self.vf(w)
+        w = self.spL + k - (sp + self.y)
         self.msg_send(self.leftNode, {
             "w": w
         }, _WAIT, _WAIT_RELEASE)
@@ -159,10 +147,10 @@ class _LOCK_RECIPIENT_2(_State):
 
         self.node.r = self.node.group.random(ZR)
         self.node.R = self.node.g ** self.node.r
-        self.node.rfactor =  self.node.Rprev * self.node.R * self.node.Yprev
+        self.node.rfactorL =  self.node.Rprev * self.node.R * self.node.Yprev
         self.node.eL = self.node.group.hash((
             self.node.pkL,
-            self.node.rfactor,
+            self.node.rfactorL,
             amount
         ))
 
@@ -179,10 +167,10 @@ class _LOCK_RECIPIENT_2(_State):
 class _LOCK_SENDER_3(_State):
     def msg_receive(self, msg) -> None:
         Rnext, s, amount = msg["R"], msg["s"], msg["amount"]
-
+        self.node.rfactorR = self.node.R * Rnext * self.node.Y
         self.node.eR = self.node.group.hash((
             self.node.pkR,
-            self.node.R * Rnext * self.node.Y,
+            self.node.rfactorR,
             amount
         ))
 
@@ -211,14 +199,15 @@ class _LOCK_RECIPIENT_4(_State):
         if self.node.kn == 0:
             self.node.lock(amount-self.node.TRANSACTION_FEE)
         else:
-            self.node.release()
+            self.node.release(self.node.kn)
 
 class _WAIT_RELEASE(_State):
     def msg_receive(self, msg) -> None:
         #self.node.log(f"W0: {msg['W0']}")
-        self.node.log(f"w: {msg['w']}")
+        w = msg["w"]
+        self.node.log(f"w: {self.node.vf(w)}")
         if(self.node.leftNode is not None):
-            self.node.release()
+            self.node.release(w)
 
 class _SETTING_UP(_State):
     def msg_receive(self, msg) -> None:
