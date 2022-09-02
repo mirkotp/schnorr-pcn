@@ -17,4 +17,4 @@ for i in range(N_NODES):
     pkR = g ** (skeys[i] + skeys[i+1]) if i < N_NODES-1 else None
     nodes.append(Node(group, g, f"node_{i}", skeys[i], pkL, pkR))
 
-nodes[0].setup_transaction(50, nodes[1:])
+nodes[0].init_transaction(50, nodes[1:])
