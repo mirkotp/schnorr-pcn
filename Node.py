@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
 from charm.toolbox.ecgroup import ZR
 
+
+# TODO: NIZK, COMM, ABORT
+
 class Node:
     _state = None
     transaction_fee = 1
@@ -26,13 +29,6 @@ class Node:
         self.pk = self.g ** self.sk
   
         self._setState(_WAIT_SETUP)
-        # Picks a free port and starts a socket
-        # self._sock = socket.socket()
-        # self._sock.bind(('', 0))
-
-    def __del__(self):
-        pass
-        # self._sock.close()
 
     def init_transaction(self, amount, path):
         self._setState(_SETUP, {"amount": amount, "path": path})
@@ -46,8 +42,14 @@ class Node:
     def _log(self, msg):
         print(f"{self.name}: {msg}")
 
+    def _print_state(self):
+        self._log(f"STATE:\tY\': {self.SI[0]}")
+        print(f"\t\t Y: {self.SI[1]}")
+        print(f"\t\t y: {self.SI[2]}")
+        print(f"\t\t k: {self.k[1]}")
+        print()
+
     def _setState(self, state_class, state_info={}):
-        self._log(f"STATE_CHANGE: {self._state.__class__.__name__} to {state_class.__name__}")
         self._state = state_class(state_info)
         self._state.node = self
         self._state.default_action()
@@ -88,6 +90,7 @@ class _SETUP(_State):
         Y = self.node.g ** y
 
         self.node.SI = (None, Y, y)
+        self.node._print_state()
         
         kn = y
         Yi = Y
@@ -128,6 +131,8 @@ class _WAIT_SETUP(_State):
 
         self.node.SI = (Yprev, Y, y)
         self.node.k = (None, msg["k"])
+        self.node._print_state()
+
         self.node.leftNode, self.node.rightNode = msg["leftNode"], msg["rightNode"]
         self.node._setState(_LOCK_RECIPIENT_2)
 
@@ -153,6 +158,7 @@ class _LOCK_RECIPIENT_2(_State):
         Rprev, amount, pk_prev = msg["Rprev"], msg["amount"], msg["pk_prev"]
         Yprev, _, _ = self.node.SI
         self.node.pkL = self.node.pk * pk_prev
+        m = f"I'll pay {amount} to {self.node.name}"
 
         r = self.node.group.random(ZR)
         R = self.node.g ** r
@@ -160,7 +166,7 @@ class _LOCK_RECIPIENT_2(_State):
         e = self.node.group.hash((
          self.node.pkL,
             rfactor,
-            amount
+            m
         ))
 
         s = r + (e * self.node.sk) 
@@ -171,6 +177,7 @@ class _LOCK_RECIPIENT_2(_State):
             "amount": amount,
             "R": R,
             "s": s,
+            "m": m,
             "pk_next": self.node.pk
         }, _LOCK_SENDER_3)
         
@@ -178,7 +185,8 @@ class _LOCK_SENDER_3(_State):
     def msg_receive(self, msg) -> None:
         r = self.state_info["r"]
         R = self.state_info["R"]
-        Rnext, s, amount, pk_next = msg["R"], msg["s"], msg["amount"], msg["pk_next"]
+        Rnext, s, pk_next = msg["R"], msg["s"], msg["pk_next"]
+        amount, m = msg["amount"], msg["m"]
         _, Y, _ = self.node.SI
         self.node.pkR = self.node.pk * pk_next
 
@@ -186,7 +194,7 @@ class _LOCK_SENDER_3(_State):
         e = self.node.group.hash((
             self.node.pkR,
             rfactor,
-            amount
+            m
         ))
 
         # Verify:
@@ -195,27 +203,26 @@ class _LOCK_SENDER_3(_State):
         # Rnext * (self.node.pkR / (self.node.g ** self.node.sk)) ** self.node.e)
 
         sp = s + r + (e * self.node.sk)
-        self.node.LR = (amount, self.node.pkR)
+        self.node.LR = (m, self.node.pkR)
         self.node.SR = sp
+
+        self.node._log(f"Lock ({self.node.rightNode.name}):\t m: {self.node.LR[0]}")
+        print(f"\t\t\tpk: {self.node.LR[1]}")
 
         self.node._setState(_WAIT_RELEASE)
         self.node._msg_send(self.node.rightNode, {
             "action": "LOCK_RECIPIENT_4",
             "amount": amount,
+            "m": m,
             "sp": sp
         }, _LOCK_RECIPIENT_4)
 
 class _LOCK_RECIPIENT_4(_State):
     def msg_receive(self, msg) -> None:
         rfactor = self.state_info["rfactor"]
-        amount, sp = msg["amount"], msg["sp"]
+        amount, m, sp = msg["amount"], msg["m"], msg["sp"]
 
-        # Verify:
-        # self.node.g ** self.node.spL
-        # == 
-        # self.node.Rprev * self.node.R * (self.node.pkL ** self.node.e)
-
-        self.node.LL = (amount, self.node.pkR)
+        self.node.LL = (m, self.node.pkR)
         self.node.SL = (rfactor, sp)
 
         if self.node.k[1] is None:
@@ -226,7 +233,7 @@ class _LOCK_RECIPIENT_4(_State):
 class _WAIT_RELEASE(_State):
     def msg_receive(self, msg) -> None:
         self.node.k = (msg["W0"], msg["w"])
-        self.node._log(f"VALID LOCK: {self.node.vf(self.node.LR, self.node.k)}")
+        self.node._log(f"VALID KEY: {self.node.vf(self.node.LR, self.node.k)}")
         if(self.node.leftNode is not None):
             self.node._setState(_RELEASE, {"k": self.node.k})
 
@@ -239,6 +246,10 @@ class _RELEASE(_State):
         SR = self.node.SR if self.node.SR is not None else 0
 
         w = w1 + s - (SR + y)
+        print()
+        self.node._log(f"Key:\tW0:{W0}")
+        print(f"\t\t w: {w}")
+
         self.node._setState(_WAIT_SETUP)
         self.node._msg_send(self.node.leftNode, {
             "W0": W0,
