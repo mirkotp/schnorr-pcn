@@ -2,8 +2,6 @@ from abc import ABC, abstractmethod
 from socketserver import BaseRequestHandler
 from charm.toolbox.ecgroup import ZR
 
-# TODO: NIZK, COMM, ABORT
-
 class Node(BaseRequestHandler):
     _state = None
     transaction_fee = 1
@@ -27,13 +25,12 @@ class Node(BaseRequestHandler):
         self.name = name
         self.sk = self.group.random(ZR)
         self.pk = self.g ** self.sk
-  
         self._setState(_WAIT_SETUP)
 
     def init_transaction(self, amount, path):
         self._setState(_SETUP, {"amount": amount, "path": path})
 
-    def vf(self, l, k):
+    def _vf(self, l, k):
         m, pk = l
         R, s = k
         e = self.group.hash((pk, R, m))        
@@ -62,6 +59,32 @@ class Node(BaseRequestHandler):
     def _msg_send(self, recipient, msg, expected_state):
         msg["__expected_state__"] = expected_state.__name__
         recipient._msg_receive(msg)
+
+    def _nizk_prove(self, x):
+        h = self.g**x
+        r = self.group.random(ZR)
+        u = self.g ** r
+        c = self.group.hash((self.g, h, u))
+        return (h, (u, c, r+c*x))
+    
+    def _nizk_verify(self, h, proof):
+        u, c, z = proof
+        if c != self.group.hash((self.g, h, u)): return False
+        return self.g**z == u*h**c
+
+    def _commit(self, value):
+        r = self.group.random(ZR)
+        c = self.group.hash((r, *value))
+        return (r, c)
+    
+    def _commit_verify(self, com, decom, value):
+        c = self.group.hash((decom, *value))
+        return c == com
+    
+    def _abort_protocol(self, msg):
+        self._log(f"Protocol Error: {msg}")
+        exit()
+        
 class _State(ABC):
     def __init__(self, state_info={}):
         self.state_info = state_info
@@ -87,7 +110,6 @@ class _SETUP(_State):
         self.node.rightNode = path[0]
         y = self.node.group.random(ZR)
         Y = self.node.g ** y
-
         self.node.SI = (None, Y, y)
         self.node._print_state()
         
@@ -104,7 +126,8 @@ class _SETUP(_State):
                 "yi": yi,
                 "leftNode": path[i-1] if i != 0 else self.node,
                 "rightNode": path[i+1],
-                "k": None
+                "k": None,
+                "proof": self.node._nizk_prove(kn)
             }, _WAIT_SETUP)
 
         self.node._msg_send(path[-1], {
@@ -112,7 +135,8 @@ class _SETUP(_State):
             "yi": 0,
             "leftNode": path[-2],
             "rightNode": None,
-            "k": kn
+            "k": kn,
+            "proof": self.node._nizk_prove(kn)
         }, _WAIT_SETUP)
 
         self.node._setState(_LOCK_SENDER_1, {"amount": amount})
@@ -122,10 +146,13 @@ class _SETUP(_State):
 
 class _WAIT_SETUP(_State):
     def msg_receive(self, msg) -> None:
+        if not self.node._nizk_verify(*msg["proof"]):
+            self.node._abort_protocol("Invalid proof")
+
         Yprev = msg["Yi_prev"]
         y = msg["yi"]
         Y = Yprev * (self.node.g ** y)
-
+        
         self.node.SI = (Yprev, Y, y)
         self.node.k = (None, msg["k"])
         self.node._print_state()
@@ -135,15 +162,10 @@ class _WAIT_SETUP(_State):
 
 class _LOCK_SENDER_1(_State):
     def default_action(self):
-        amount = self.state_info["amount"]
-        r = self.node.group.random(ZR)
-        R = self.node.g ** r  
-
-        self.node._setState(_LOCK_SENDER_3, {'r': r, 'R': R})
+        self.node._setState(_LOCK_SENDER_3)
         self.node._msg_send(self.node.rightNode, {
-            "amount": amount,
-            "Rprev": R,
-            "pk_prev": self.node.pk
+            "amount": self.state_info["amount"],
+            "pk_prev": self.node.pk,
         }, _LOCK_RECIPIENT_2)
 
     def msg_receive(self, msg) -> None:
@@ -151,13 +173,49 @@ class _LOCK_SENDER_1(_State):
 
 class _LOCK_RECIPIENT_2(_State):
     def msg_receive(self, msg) -> None:
-        Rprev, amount, pk_prev = msg["Rprev"], msg["amount"], msg["pk_prev"]
-        Yprev, _, _ = self.node.SI
-        self.node.pkL = self.node.pk * pk_prev
-        m = f"I'll pay {amount} to {self.node.name}"
-
+        self.node.pkL = self.node.pk * msg["pk_prev"]
         r = self.node.group.random(ZR)
         R = self.node.g ** r
+        proof = self.node._nizk_prove(r)
+        decom, com = self.node._commit((R, proof[0], *proof[1]))
+
+        self.node._setState(_LOCK_RECIPIENT_4, {
+            "r": r, 
+            "R": R, 
+            "amount": msg["amount"],
+            "proof": proof,
+            "decom": decom })
+        self.node._msg_send(self.node.leftNode, {
+            "pk_next": self.node.pk,
+            "com": com
+        }, _LOCK_SENDER_3)
+
+class _LOCK_SENDER_3(_State):
+    def msg_receive(self, msg):
+        self.node.pkR = self.node.pk * msg["pk_next"]
+        r = self.node.group.random(ZR)
+        R = self.node.g ** r  
+
+        self.node._setState(_LOCK_SENDER_5, {
+            'r': r,
+            'R': R,
+            "com": msg["com"] })
+        self.node._msg_send(self.node.rightNode, {
+            "Rprev": R,
+            "proof": self.node._nizk_prove(r)
+        }, _LOCK_RECIPIENT_4)
+
+class _LOCK_RECIPIENT_4(_State):
+    def msg_receive(self, msg) -> None:
+        if not self.node._nizk_verify(*msg["proof"]):
+            self.node._abort_protocol("Invalid proof!")
+
+        R, r = self.state_info["R"], self.state_info["r"]
+        Rprev = msg["Rprev"]
+        Yprev, _, _ = self.node.SI
+        amount = self.state_info["amount"]
+        m = f"I'll pay {amount} to {self.node.name}"
+
         rfactor =  Rprev * R * Yprev
         e = self.node.group.hash((
          self.node.pkL,
@@ -167,23 +225,35 @@ class _LOCK_RECIPIENT_2(_State):
 
         s = r + (e * self.node.sk) 
 
-        self.node._setState(_LOCK_RECIPIENT_4, {"rfactor": rfactor})
+        self.node._setState(_LOCK_RECIPIENT_6, {
+            "rfactor": rfactor, 
+            "R": R, 
+            "Rprev": Rprev,
+            "e": e })
         self.node._msg_send(self.node.leftNode, {
             "amount": amount,
             "R": R,
             "s": s,
             "m": m,
-            "pk_next": self.node.pk
-        }, _LOCK_SENDER_3)
+            "proof": self.state_info["proof"],
+            "decom": self.state_info["decom"]
+        }, _LOCK_SENDER_5)
         
-class _LOCK_SENDER_3(_State):
+class _LOCK_SENDER_5(_State):
     def msg_receive(self, msg) -> None:
+        if not self.node._nizk_verify(*msg["proof"]):
+            self.node._abort_protocol("Invalid proof!")
+
         r = self.state_info["r"]
         R = self.state_info["R"]
-        Rnext, s, pk_next = msg["R"], msg["s"], msg["pk_next"]
+        Rnext, s = msg["R"], msg["s"]
+        proof = msg["proof"]
+
+        if not self.node._commit_verify(self.state_info["com"], msg["decom"], (Rnext, proof[0], *proof[1])):
+            self.node._abort_protocol("Invalid commitment!")
+
         amount, m = msg["amount"], msg["m"]
         _, Y, _ = self.node.SI
-        self.node.pkR = self.node.pk * pk_next
 
         rfactor = R * Rnext * Y
         e = self.node.group.hash((
@@ -192,10 +262,8 @@ class _LOCK_SENDER_3(_State):
             m
         ))
 
-        # Verify:
-        # self.node.g ** s
-        # ==
-        # Rnext * (self.node.pkR / (self.node.g ** self.node.sk)) ** self.node.e)
+        if self.node.g ** s != Rnext * (self.node.pkR / (self.node.g ** self.node.sk)) ** e:
+            self.node._abort_protocol("Invalid signature!")
 
         sp = s + r + (e * self.node.sk)
         self.node.LR = (m, self.node.pkR)
@@ -206,15 +274,19 @@ class _LOCK_SENDER_3(_State):
             "amount": amount,
             "m": m,
             "sp": sp
-        }, _LOCK_RECIPIENT_4)
+        }, _LOCK_RECIPIENT_6)
 
-class _LOCK_RECIPIENT_4(_State):
+class _LOCK_RECIPIENT_6(_State):
     def msg_receive(self, msg) -> None:
-        rfactor = self.state_info["rfactor"]
+        rfactor, e = self.state_info["rfactor"], self.state_info["e"]
+        R, Rprev = self.state_info["R"], self.state_info["Rprev"]
         amount, m, sp = msg["amount"], msg["m"], msg["sp"]
 
         self.node.LL = (m, self.node.pkL)
         self.node.SL = (rfactor, sp)
+
+        if self.node.g ** sp != Rprev * R * self.node.pkL ** e:
+            self.node._abort_protocol("Invalid signature!")
 
         print()
         self.node._log(f"Lock ({self.node.leftNode.name}):\t m: {self.node.LL[0]}")
@@ -230,7 +302,7 @@ class _LOCK_RECIPIENT_4(_State):
 class _WAIT_RELEASE(_State):
     def msg_receive(self, msg) -> None:
         self.node.k = (msg["W0"], msg["w"])
-        self.node._log(f"VALID KEY: {self.node.vf(self.node.LR, self.node.k)}")
+        self.node._log(f"VALID KEY: {self.node._vf(self.node.LR, self.node.k)}")
         if(self.node.leftNode is not None):
             self.node._setState(_RELEASE, {"k": self.node.k})
 
