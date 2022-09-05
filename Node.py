@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
+from socketserver import BaseRequestHandler
 from charm.toolbox.ecgroup import ZR
-
 
 # TODO: NIZK, COMM, ABORT
 
-class Node:
+class Node(BaseRequestHandler):
     _state = None
     transaction_fee = 1
 
@@ -62,7 +62,6 @@ class Node:
     def _msg_send(self, recipient, msg, expected_state):
         msg["__expected_state__"] = expected_state.__name__
         recipient._msg_receive(msg)
-
 class _State(ABC):
     def __init__(self, state_info={}):
         self.state_info = state_info
@@ -101,7 +100,6 @@ class _SETUP(_State):
             Yi = Yi_left * (self.node.g ** yi)
 
             self.node._msg_send(n, {
-                "action": "RECEIVE",
                 "Yi_prev": Yi_left,
                 "yi": yi,
                 "leftNode": path[i-1] if i != 0 else self.node,
@@ -110,7 +108,6 @@ class _SETUP(_State):
             }, _WAIT_SETUP)
 
         self.node._msg_send(path[-1], {
-            "action": "RECEIVE",
             "Yi_prev": Yi,
             "yi": 0,
             "leftNode": path[-2],
@@ -144,7 +141,6 @@ class _LOCK_SENDER_1(_State):
 
         self.node._setState(_LOCK_SENDER_3, {'r': r, 'R': R})
         self.node._msg_send(self.node.rightNode, {
-            "action": "LOCK_RECIPIENT_2",
             "amount": amount,
             "Rprev": R,
             "pk_prev": self.node.pk
@@ -173,7 +169,6 @@ class _LOCK_RECIPIENT_2(_State):
 
         self.node._setState(_LOCK_RECIPIENT_4, {"rfactor": rfactor})
         self.node._msg_send(self.node.leftNode, {
-            "action": "LOCK_SENDER_3",
             "amount": amount,
             "R": R,
             "s": s,
@@ -206,12 +201,8 @@ class _LOCK_SENDER_3(_State):
         self.node.LR = (m, self.node.pkR)
         self.node.SR = sp
 
-        self.node._log(f"Lock ({self.node.rightNode.name}):\t m: {self.node.LR[0]}")
-        print(f"\t\t\tpk: {self.node.LR[1]}")
-
         self.node._setState(_WAIT_RELEASE)
         self.node._msg_send(self.node.rightNode, {
-            "action": "LOCK_RECIPIENT_4",
             "amount": amount,
             "m": m,
             "sp": sp
@@ -222,8 +213,14 @@ class _LOCK_RECIPIENT_4(_State):
         rfactor = self.state_info["rfactor"]
         amount, m, sp = msg["amount"], msg["m"], msg["sp"]
 
-        self.node.LL = (m, self.node.pkR)
+        self.node.LL = (m, self.node.pkL)
         self.node.SL = (rfactor, sp)
+
+        print()
+        self.node._log(f"Lock ({self.node.leftNode.name}):\t m: {self.node.LL[0]}")
+        print(f"\t\t\tpk: {self.node.LL[1]}")
+        print(f"\t\t\t R: {self.node.SL[0]}")
+        print(f"\t\t\t s: {self.node.SL[1]}")
 
         if self.node.k[1] is None:
             self.node._setState(_LOCK_SENDER_1, {"amount": amount-self.node.transaction_fee})
@@ -247,7 +244,7 @@ class _RELEASE(_State):
 
         w = w1 + s - (SR + y)
         print()
-        self.node._log(f"Key:\tW0:{W0}")
+        self.node._log(f"Key:\tW0: {W0}")
         print(f"\t\t w: {w}")
 
         self.node._setState(_WAIT_SETUP)

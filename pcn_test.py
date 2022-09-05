@@ -11,4 +11,4 @@ nodes = []
 for i in range(N_NODES):
     nodes.append(Node(group, g, f"node_{i}"))
 
-nodes[0].init_transaction(50, nodes[1:])
+nodes[0].init_transaction(53, nodes[1:])
