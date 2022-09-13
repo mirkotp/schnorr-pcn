@@ -149,12 +149,13 @@ class _WAIT_SETUP(_State):
         if not self.node._nizk_verify(*msg["proof"]):
             self.node._abort_protocol("Invalid proof")
 
+        ki = msg["k"]
         Yprev = msg["Yi_prev"]
         y = msg["yi"]
-        Y = Yprev * (self.node.g ** y)
+        Y = Yprev * (self.node.g ** y) if ki is None else 0
         
         self.node.SI = (Yprev, Y, y)
-        self.node.k = (None, msg["k"])
+        self.node.k = (None, ki)
         self.node._print_state()
 
         self.node.leftNode, self.node.rightNode = msg["leftNode"], msg["rightNode"]
