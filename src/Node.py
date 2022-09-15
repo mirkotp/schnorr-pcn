@@ -1,23 +1,24 @@
 from abc import ABC, abstractmethod
-from socketserver import BaseRequestHandler
+import socket
+from charm.core.engine.util import objectToBytes
 from charm.toolbox.ecgroup import ZR
 
-class Node(BaseRequestHandler):
+class Node():
     _state = None
     transaction_fee = 1
 
-    leftNode = None
-    rightNode = None
+    leftNode = ('', 0)
+    rightNode = ('', 0)
 
     # Protocol variables
-    pkL = None              # Shared key with left node
-    pkR = None              # Shared key with right node
-    SI = (None, None, None) # State
-    SL = (None, None)       # Left state
-    SR =  None              # Right state
-    LL = (None, None)       # Left lock
-    LR = (None, None)       # Right lock
-    k  = (None, None)       # Left lock's key
+    pkL = 0              # Shared key with left node
+    pkR = 0              # Shared key with right node
+    SI = (0, 0, 0) # State
+    SL = (0, 0)       # Left state
+    SR =  0              # Right state
+    LL = (0, 0)       # Left lock
+    LR = (0, 0)       # Right lock
+    k  = (0, 0)       # Left lock's key
 
     def __init__(self, group, g, name):
         self.group = group
@@ -33,7 +34,7 @@ class Node(BaseRequestHandler):
     def _vf(self, l, k):
         m, pk = l
         R, s = k
-        e = self.group.hash((pk, R, m))        
+        e = self.group.hash((pk, R, m))
         return self.g ** s == R * (pk ** e)
     
     def _log(self, msg):
@@ -58,10 +59,12 @@ class Node(BaseRequestHandler):
 
     def _msg_send(self, recipient, msg, expected_state):
         msg["__expected_state__"] = expected_state.__name__
-        recipient._msg_receive(msg)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(recipient)
+            sock.sendall(objectToBytes(msg, self.group))
 
     def _nizk_prove(self, x):
-        h = self.g**x
+        h = self.g ** x
         r = self.group.random(ZR)
         u = self.g ** r
         c = self.group.hash((self.g, h, u))
@@ -107,10 +110,10 @@ class _State(ABC):
 class _SETUP(_State):
     def default_action(self):
         amount, path = self.state_info["amount"], self.state_info["path"]
-        self.node.rightNode = path[0]
+        self.node.rightNode = tuple(path[0])
         y = self.node.group.random(ZR)
         Y = self.node.g ** y
-        self.node.SI = (None, Y, y)
+        self.node.SI = (0, Y, y)
         self.node._print_state()
         
         kn = y
@@ -121,20 +124,20 @@ class _SETUP(_State):
             Yi_left = Yi
             Yi = Yi_left * (self.node.g ** yi)
 
-            self.node._msg_send(n, {
+            self.node._msg_send(tuple(n), {
                 "Yi_prev": Yi_left,
                 "yi": yi,
-                "leftNode": path[i-1] if i != 0 else self.node,
+                "leftNode": path[i-1] if i != 0 else self.node.address,
                 "rightNode": path[i+1],
-                "k": None,
+                "k": 0,
                 "proof": self.node._nizk_prove(kn)
             }, _WAIT_SETUP)
 
-        self.node._msg_send(path[-1], {
+        self.node._msg_send(tuple(path[-1]), {
             "Yi_prev": Yi,
             "yi": 0,
             "leftNode": path[-2],
-            "rightNode": None,
+            "rightNode": ('', 0),
             "k": kn,
             "proof": self.node._nizk_prove(kn)
         }, _WAIT_SETUP)
@@ -146,19 +149,24 @@ class _SETUP(_State):
 
 class _WAIT_SETUP(_State):
     def msg_receive(self, msg) -> None:
+        if 'action' in msg and msg['action'] == "send":
+            self.node.init_transaction(msg['amount'], msg['path'])
+            return
+
         if not self.node._nizk_verify(*msg["proof"]):
             self.node._abort_protocol("Invalid proof")
 
         ki = msg["k"]
         Yprev = msg["Yi_prev"]
         y = msg["yi"]
-        Y = Yprev * (self.node.g ** y) if ki is None else 0
+        Y = Yprev * (self.node.g ** y) if ki == 0 else 0
         
         self.node.SI = (Yprev, Y, y)
-        self.node.k = (None, ki)
+        self.node.k = (0, ki)
         self.node._print_state()
 
-        self.node.leftNode, self.node.rightNode = msg["leftNode"], msg["rightNode"]
+        self.node.leftNode = tuple(msg["leftNode"])
+        self.node.rightNode = tuple(msg["rightNode"])
         self.node._setState(_LOCK_RECIPIENT_2)
 
 class _LOCK_SENDER_1(_State):
@@ -290,12 +298,12 @@ class _LOCK_RECIPIENT_6(_State):
             self.node._abort_protocol("Invalid signature!")
 
         print()
-        self.node._log(f"Lock ({self.node.leftNode.name}):\t m: {self.node.LL[0]}")
+        self.node._log(f"Left lock:\t m: {self.node.LL[0]}")
         print(f"\t\t\tpk: {self.node.LL[1]}")
         print(f"\t\t\t R: {self.node.SL[0]}")
         print(f"\t\t\t s: {self.node.SL[1]}")
 
-        if self.node.k[1] is None:
+        if self.node.k[1] == 0:
             self.node._setState(_LOCK_SENDER_1, {"amount": amount-self.node.transaction_fee})
         else:
             self.node._setState(_RELEASE, {"k": self.node.k})
@@ -304,7 +312,7 @@ class _WAIT_RELEASE(_State):
     def msg_receive(self, msg) -> None:
         self.node.k = (msg["W0"], msg["w"])
         self.node._log(f"VALID KEY: {self.node._vf(self.node.LR, self.node.k)}")
-        if(self.node.leftNode is not None):
+        if(self.node.leftNode != ('', 0)):
             self.node._setState(_RELEASE, {"k": self.node.k})
 
 class _RELEASE(_State):
@@ -313,9 +321,8 @@ class _RELEASE(_State):
         _, _, y = self.node.SI
         W0, w1 = self.node.SL
         _, s = k
-        SR = self.node.SR if self.node.SR is not None else 0
-
-        w = w1 + s - (SR + y)
+        
+        w = w1 + s - (self.node.SR + y)
         print()
         self.node._log(f"Key:\tW0: {W0}")
         print(f"\t\t w: {w}")

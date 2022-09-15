@@ -1,0 +1,29 @@
+services:
+  node_1:
+    build: .
+    environment:
+      - NODE_NAME=node_1
+      - GENERATOR
+      - TRANSFER=1
+      - AMOUNT=50
+      - TRANSFER_PATH=node_2,node_3,node_4,node_5
+  node_2:
+    build: .
+    environment:
+      - NODE_NAME=node_2
+      - GENERATOR
+  node_3:
+    build: .
+    environment:
+      - NODE_NAME=node_3
+      - GENERATOR
+  node_4:
+    build: .
+    environment:
+      - NODE_NAME=node_4
+      - GENERATOR
+  node_5:
+    build: .
+    environment:
+      - NODE_NAME=node_5
+      - GENERATOR

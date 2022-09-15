@@ -8,7 +8,7 @@
             "name": "PCN Test",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/pcn_test.py",
+            "program": "${workspaceFolder}/src/pcn_test.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": []
