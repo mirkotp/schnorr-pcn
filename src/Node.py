@@ -1,21 +1,24 @@
 from abc import ABC, abstractmethod
 import socket
+from threading import Lock
 from charm.core.engine.util import objectToBytes
 from charm.toolbox.ecgroup import ZR
 
 class Node():
     _state = None
+    _lock  = None
+    _debug = False
     transaction_fee = 1
 
     leftNode = ('', 0)
     rightNode = ('', 0)
 
     # Protocol variables
-    pkL = 0              # Shared key with left node
-    pkR = 0              # Shared key with right node
-    SI = (0, 0, 0) # State
+    pkL = 0           # Shared key with left node
+    pkR = 0           # Shared key with right node
+    SI = (0, 0, 0)    # State
     SL = (0, 0)       # Left state
-    SR =  0              # Right state
+    SR =  0           # Right state
     LL = (0, 0)       # Left lock
     LR = (0, 0)       # Right lock
     k  = (0, 0)       # Left lock's key
@@ -29,7 +32,10 @@ class Node():
         self._setState(_WAIT_SETUP)
 
     def init_transaction(self, amount, path):
+        self._lock = Lock()
+        self._lock.acquire()
         self._setState(_SETUP, {"amount": amount, "path": path})
+        return self._lock
 
     def _vf(self, l, k):
         m, pk = l
@@ -37,15 +43,16 @@ class Node():
         e = self.group.hash((pk, R, m))
         return self.g ** s == R * (pk ** e)
     
-    def _log(self, msg):
-        print(f"{self.name}: {msg}")
+    def _log(self, *args):
+        if self._debug is True:
+            print(*args)
 
     def _print_state(self):
         self._log(f"STATE:\tY\': {self.SI[0]}")
-        print(f"\t\t Y: {self.SI[1]}")
-        print(f"\t\t y: {self.SI[2]}")
-        print(f"\t\t k: {self.k[1]}")
-        print()
+        self._log(f"\t\t Y: {self.SI[1]}")
+        self._log(f"\t\t y: {self.SI[2]}")
+        self._log(f"\t\t k: {self.k[1]}")
+        self._log()
 
     def _setState(self, state_class, state_info={}):
         self._state = state_class(state_info)
@@ -148,6 +155,10 @@ class _SETUP(_State):
         raise Exception("Not available.")
 
 class _WAIT_SETUP(_State):
+    def default_action(self):
+        if self.node._lock is not None:
+            self.node._lock.release()
+
     def msg_receive(self, msg) -> None:
         if 'action' in msg and msg['action'] == "send":
             self.node.init_transaction(msg['amount'], msg['path'])
@@ -297,11 +308,11 @@ class _LOCK_RECIPIENT_6(_State):
         if self.node.g ** sp != Rprev * R * self.node.pkL ** e:
             self.node._abort_protocol("Invalid signature!")
 
-        print()
+        self.node._log()
         self.node._log(f"Left lock:\t m: {self.node.LL[0]}")
-        print(f"\t\t\tpk: {self.node.LL[1]}")
-        print(f"\t\t\t R: {self.node.SL[0]}")
-        print(f"\t\t\t s: {self.node.SL[1]}")
+        self.node._log(f"\t\tpk: {self.node.LL[1]}")
+        self.node._log(f"\t\t R: {self.node.SL[0]}")
+        self.node._log(f"\t\t s: {self.node.SL[1]}")
 
         if self.node.k[1] == 0:
             self.node._setState(_LOCK_SENDER_1, {"amount": amount-self.node.transaction_fee})
@@ -314,6 +325,8 @@ class _WAIT_RELEASE(_State):
         self.node._log(f"VALID KEY: {self.node._vf(self.node.LR, self.node.k)}")
         if(self.node.leftNode != ('', 0)):
             self.node._setState(_RELEASE, {"k": self.node.k})
+        else:
+            self.node._setState(_WAIT_SETUP)
 
 class _RELEASE(_State):
     def default_action(self):
@@ -323,9 +336,9 @@ class _RELEASE(_State):
         _, s = k
         
         w = w1 + s - (self.node.SR + y)
-        print()
+        self.node._log()
         self.node._log(f"Key:\tW0: {W0}")
-        print(f"\t\t w: {w}")
+        self.node._log(f"\t w: {w}")
 
         self.node._setState(_WAIT_SETUP)
         self.node._msg_send(self.node.leftNode, {

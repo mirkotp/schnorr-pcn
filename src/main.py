@@ -1,7 +1,7 @@
 import os
 from threading import Thread
 from socketserver import StreamRequestHandler, TCPServer
-from time import sleep
+from time import sleep, time
 from Node import Node
 from charm.core.engine.util import bytesToObject
 from charm.toolbox.ecgroup import ECGroup
@@ -27,10 +27,14 @@ def launch_server():
 
 t = Thread(target=launch_server)
 t.start()
+sleep(1)
 
 if(os.getenv('TRANSFER') == "1"):
-    sleep(2)
-    amount = int(os.getenv('AMOUNT'))
-    path = os.getenv('TRANSFER_PATH').split(',')
-    path = list(zip(path, [5000] * len(path)))
-    node.init_transaction(amount, path)
+    start_time = time()
+    for n in range(100):
+        amount = int(os.getenv('AMOUNT'))
+        path = os.getenv('TRANSFER_PATH').split(',')
+        path = list(zip(path, [5000] * len(path)))
+        tlock = node.init_transaction(amount, path)
+        tlock.acquire()
+        print(f"{n+1}: {time() - start_time} seconds")
