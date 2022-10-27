@@ -7,7 +7,7 @@ from charm.toolbox.ecgroup import ZR
 class Node():
     _state = None
     _lock  = None
-    _debug = False
+    _debug = True
     transaction_fee = 1
 
     leftNode = ('', 0)
@@ -117,7 +117,8 @@ class _State(ABC):
 class _SETUP(_State):
     def default_action(self):
         amount, path = self.state_info["amount"], self.state_info["path"]
-        self.node.rightNode = tuple(path[0])
+        path.insert(0, self.node.address)
+        self.node.rightNode = tuple(path[1])
         y = self.node.group.random(ZR)
         Y = self.node.g ** y
         self.node.SI = (0, Y, y)
@@ -125,7 +126,7 @@ class _SETUP(_State):
         
         kn = y
         Yi = Y
-        for i, n in enumerate(path[:-1]):
+        for i, n in enumerate(path[1:-1], start=1):
             yi = self.node.group.random(ZR)
             kn = kn + yi
             Yi_left = Yi
@@ -134,7 +135,7 @@ class _SETUP(_State):
             self.node._msg_send(tuple(n), {
                 "Yi_prev": Yi_left,
                 "yi": yi,
-                "leftNode": path[i-1] if i != 0 else self.node.address,
+                "leftNode": path[i-1],
                 "rightNode": path[i+1],
                 "k": 0,
                 "proof": self.node._nizk_prove(kn)
