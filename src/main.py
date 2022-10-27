@@ -6,11 +6,10 @@ from Node import Node
 from charm.core.engine.util import bytesToObject
 from charm.toolbox.ecgroup import ECGroup
 from charm.toolbox.eccurve import secp256k1 as curve
-from charm.core.math.elliptic_curve import elliptic_curve, getGenerator
-
+from charm.core.math.elliptic_curve import getGenerator
 
 group = ECGroup(curve)
-g = getGenerator(elliptic_curve(nid=curve))
+g = getGenerator(group.ec_group)
 node_name = os.getenv('NODE_NAME')
 node = Node(group, g, node_name)
 
