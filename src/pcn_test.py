@@ -2,15 +2,16 @@ import socket
 import socketserver
 from time import sleep
 from Node import Node
-from charm.toolbox.ecgroup import ECGroup, G
+from charm.toolbox.ecgroup import ECGroup
 from charm.toolbox.eccurve import secp256k1
+from charm.core.math.elliptic_curve import getGenerator
 from charm.core.engine.util import objectToBytes, bytesToObject
 from multiprocessing import Process, Array
 
 N_NODES = 5
 
 group = ECGroup(secp256k1)
-g = group.random(G)
+g = getGenerator(group.ec_group)
 
 addrs = [''] * N_NODES
 ports = Array('i', [0] * N_NODES)
