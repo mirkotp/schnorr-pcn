@@ -1,3 +1,4 @@
+from distutils.log import debug
 import os
 from threading import Thread
 from socketserver import StreamRequestHandler, TCPServer
@@ -11,7 +12,10 @@ from charm.core.math.elliptic_curve import getGenerator
 group = ECGroup(curve)
 g = getGenerator(group.ec_group)
 node_name = os.getenv('NODE_NAME')
-node = Node(group, g, node_name)
+is_debug = bool(os.getenv('DEBUG'))
+iterations = int(os.getenv('ITER')) if os.getenv('ITER') is not None else 0
+
+node = Node(group, g, node_name, is_debug)
 
 class Handler(StreamRequestHandler):
     def handle(self):
@@ -31,7 +35,7 @@ sleep(1)
 
 if(os.getenv('TRANSFER') == "1"):
     start_time = time()
-    for n in range(1):
+    for n in range(iterations):
         amount = int(os.getenv('AMOUNT'))
         path = os.getenv('TRANSFER_PATH').split(',')
         path = list(zip(path, [5000] * len(path)))

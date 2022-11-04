@@ -5,20 +5,26 @@ services:
       - NODE_NAME=node_1
       - TRANSFER=1
       - AMOUNT=50
-      - TRANSFER_PATH=node_2,node_3,node_4,node_5
+      - ITER=1
+      - DEBUG
+      - TRANSFER_PATH=node_2
   node_2:
     build: .
     environment:
       - NODE_NAME=node_2
+      - DEBUG
   node_3:
     build: .
     environment:
       - NODE_NAME=node_3
+      - DEBUG
   node_4:
     build: .
     environment:
       - NODE_NAME=node_4
+      - DEBUG
   node_5:
     build: .
     environment:
       - NODE_NAME=node_5
+      - DEBUG

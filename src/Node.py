@@ -7,7 +7,6 @@ from charm.toolbox.ecgroup import ZR
 class Node():
     _state = None
     _lock  = None
-    _debug = True
     transaction_fee = 1
 
     leftNode = ('', 0)
@@ -23,12 +22,13 @@ class Node():
     LR = (0, 0)       # Right lock
     k  = (0, 0)       # Left lock's key
 
-    def __init__(self, group, g, name):
+    def __init__(self, group, g, name, debug=False):
         self.group = group
         self.g = g
         self.name = name
         self.sk = self.group.random(ZR)
         self.pk = self.g ** self.sk
+        self._debug=debug
         self._setState(_WAIT_SETUP)
 
     def init_transaction(self, amount, path):
