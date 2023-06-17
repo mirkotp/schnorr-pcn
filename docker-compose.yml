@@ -7,7 +7,7 @@ services:
       - AMOUNT=50
       - ITER=1
       - DEBUG
-      - TRANSFER_PATH=node_2
+      - TRANSFER_PATH=node_2,node_3,node_4,node_5
   node_2:
     build: .
     environment:

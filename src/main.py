@@ -1,26 +1,36 @@
-from distutils.log import debug
+import socket
 import os
 from threading import Thread
 from socketserver import StreamRequestHandler, TCPServer
 from time import sleep, time
 from Node import Node
-from charm.core.engine.util import bytesToObject
+from charm.core.engine.util import bytesToObject, objectToBytes
 from charm.toolbox.ecgroup import ECGroup
 from charm.toolbox.eccurve import secp256k1 as curve
 from charm.core.math.elliptic_curve import getGenerator
 
 group = ECGroup(curve)
 g = getGenerator(group.ec_group)
-node_name = os.getenv('NODE_NAME')
-is_debug = bool(os.getenv('DEBUG'))
-iterations = int(os.getenv('ITER')) if os.getenv('ITER') is not None else 0
+h = g**42  # h is a public parameter for Pedersen commitments
+node_name = os.getenv("NODE_NAME")
+is_debug = bool(os.getenv("DEBUG"))
+iterations = int(os.getenv("ITER")) if os.getenv("ITER") is not None else 0
 
-node = Node(group, g, node_name, is_debug)
+
+def msg_send(recipient, msg, expected_state):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect(recipient)
+        sock.sendall(objectToBytes(msg, group))
+
+
+node = Node(group, g, h, node_name, msg_send, is_debug)
+
 
 class Handler(StreamRequestHandler):
     def handle(self):
         data = self.rfile.readline().strip()
         node._msg_receive(bytesToObject(data, group))
+
 
 def launch_server():
     with TCPServer((node_name, 5000), Handler) as server:
@@ -29,15 +39,16 @@ def launch_server():
         node.address = addr
         server.serve_forever()
 
+
 t = Thread(target=launch_server)
 t.start()
 sleep(1)
 
-if(os.getenv('TRANSFER') == "1"):
+if os.getenv("TRANSFER") == "1":
     start_time = time()
     for n in range(iterations):
-        amount = int(os.getenv('AMOUNT'))
-        path = os.getenv('TRANSFER_PATH').split(',')
+        amount = int(os.getenv("AMOUNT"))
+        path = os.getenv("TRANSFER_PATH").split(",")
         path = list(zip(path, [5000] * len(path)))
         tlock = node.init_transaction(amount, path)
         tlock.acquire()
