@@ -13,11 +13,11 @@ group = ECGroup(curve)
 g = getGenerator(group.ec_group)
 h = g**42  # h is a public parameter for Pedersen commitments
 node_name = os.getenv("NODE_NAME")
-is_debug = bool(os.getenv("DEBUG"))
+is_debug = os.getenv("DEBUG").lower() in ('true', '1', 't')
 iterations = int(os.getenv("ITER")) if os.getenv("ITER") is not None else 0
 
 
-def msg_send(recipient, msg, expected_state):
+def msg_send(recipient, msg):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.connect(recipient)
         sock.sendall(objectToBytes(msg, group))
@@ -44,7 +44,9 @@ t = Thread(target=launch_server)
 t.start()
 sleep(1)
 
-if os.getenv("TRANSFER") == "1":
+
+initiate = os.getenv("TRANSFER").lower() in ('true', '1', 't') if os.getenv("TRANSFER") else False 
+if initiate:
     start_time = time()
     for n in range(iterations):
         amount = int(os.getenv("AMOUNT"))
@@ -52,4 +54,4 @@ if os.getenv("TRANSFER") == "1":
         path = list(zip(path, [5000] * len(path)))
         tlock = node.init_transaction(amount, path)
         tlock.acquire()
-        print(f"{n+1}: {round(time() - start_time, 2)} seconds")
+    print(f"Total execution time: {round(time() - start_time, 2)} seconds")

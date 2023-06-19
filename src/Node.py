@@ -69,7 +69,7 @@ class Node:
 
     def _msg_send(self, recipient, msg, expected_state):
         msg["__expected_state__"] = expected_state.__name__
-        self.msg_sender(recipient, msg, expected_state)
+        self.msg_sender(recipient, msg)
 
     def _nizk_prove(self, x):
         h = self.g**x
@@ -366,7 +366,7 @@ class _RELEASE(_State):
         w = w1 + s - (self.node.SR + y)
         self.node._log()
         self.node._log(f"Key:\tW0: {W0}")
-        self.node._log(f"\t w: {w}")
+        self.node._log(f"\t\t w: {w}")
 
         self.node._setState(_WAIT_SETUP)
         self.node._msg_send(self.node.leftNode, {
